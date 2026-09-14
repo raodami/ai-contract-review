@@ -1,9 +1,14 @@
 package api
 
 import (
+	"fmt"
 	"net/http"
+	"strings"
 
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
+	"ai-contract-review/internal/auth"
+	"ai-contract-review/internal/nlp"
 	"ai-contract-review/internal/store"
 )
 
@@ -30,45 +35,237 @@ type UserInfo struct {
 
 // SetupRoutes sets up auth routes
 func SetupRoutes(r *gin.Engine, s *store.Store) {
-	auth := r.Group("/api/auth")
+	authGroup := r.Group("/api/auth")
 	{
-		auth.POST("/register", func(c *gin.Context) {
+		authGroup.POST("/register", func(c *gin.Context) {
 			var req RegisterRequest
 			if err := c.ShouldBindJSON(&req); err != nil {
 				c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 				return
 			}
-			// TODO: implement actual registration with bcrypt
-			c.JSON(http.StatusCreated, gin.H{"message": "registered"})
+
+			// Check if user exists
+			existing, _ := s.GetUserByEmail(req.Email)
+			if existing != nil {
+				c.JSON(http.StatusConflict, gin.H{"error": "Email already registered"})
+				return
+			}
+
+			// Hash password
+			hashedPassword, err := auth.HashPassword(req.Password)
+			if err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to hash password"})
+				return
+			}
+
+			// Create user
+			userID := uuid.New().String()
+			if err := s.CreateUser(userID, req.Email, hashedPassword); err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create user"})
+				return
+			}
+
+			// Generate JWT
+			token, err := auth.GenerateToken(userID)
+			if err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to generate token"})
+				return
+			}
+
+			c.JSON(http.StatusCreated, gin.H{
+				"token": token,
+				"user": UserInfo{
+					ID:        userID,
+					Email:     req.Email,
+					FreeQuota: store.FreeQuota,
+				},
+			})
 		})
-		auth.POST("/login", func(c *gin.Context) {
+
+		authGroup.POST("/login", func(c *gin.Context) {
 			var req LoginRequest
 			if err := c.ShouldBindJSON(&req); err != nil {
 				c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 				return
 			}
-			// TODO: implement actual login
-			c.JSON(http.StatusOK, gin.H{"message": "login"})
+
+			user, err := s.GetUserByEmail(req.Email)
+			if err != nil || user == nil {
+				c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid credentials"})
+				return
+			}
+
+			if !auth.CheckPassword(req.Password, user.Password) {
+				c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid credentials"})
+				return
+			}
+
+			token, err := auth.GenerateToken(user.ID)
+			if err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to generate token"})
+				return
+			}
+
+			c.JSON(http.StatusOK, gin.H{
+				"token": token,
+				"user": UserInfo{
+					ID:        user.ID,
+					Email:     user.Email,
+					IsPro:     user.IsPro,
+					UsageMin:  user.UsageMin,
+					FreeQuota: store.FreeQuota,
+				},
+			})
 		})
-		auth.GET("/me", func(c *gin.Context) {
-			// TODO: implement user info
-			c.JSON(http.StatusOK, gin.H{"message": "auth"})
+
+		authGroup.GET("/me", func(c *gin.Context) {
+			tokenStr := strings.TrimPrefix(c.GetHeader("Authorization"), "Bearer ")
+
+			userID, err := auth.ParseToken(tokenStr)
+			if err != nil {
+				c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid token"})
+				return
+			}
+
+			user, err := s.GetUserByID(userID)
+			if err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get user"})
+				return
+			}
+
+			allowed, remaining, _ := s.CheckQuota(userID, "")
+			c.JSON(http.StatusOK, gin.H{
+				"id":            user.ID,
+				"email":         user.Email,
+				"is_pro":        user.IsPro,
+				"usage_minutes": user.UsageMin,
+				"free_quota":    store.FreeQuota,
+				"allowed":       allowed,
+				"remaining_min": remaining,
+			})
 		})
 	}
 
-	user := r.Group("/api/user")
+	userGroup := r.Group("/api/user")
 	{
-		user.GET("/usage", func(c *gin.Context) {
-			allowed, remaining, err := s.CheckQuota("", "")
-			if err != nil {
-				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-				return
-			}
+		userGroup.GET("/usage", func(c *gin.Context) {
+			allowed, remaining, _ := s.CheckQuota("", "")
 			c.JSON(http.StatusOK, gin.H{
 				"allowed":       allowed,
 				"remaining_min": remaining,
 				"free_quota":    store.FreeQuota,
 			})
 		})
+
+		userGroup.PUT("/subscribe", func(c *gin.Context) {
+			tokenStr := strings.TrimPrefix(c.GetHeader("Authorization"), "Bearer ")
+
+			userID, err := auth.ParseToken(tokenStr)
+			if err != nil {
+				c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid token"})
+				return
+			}
+
+			var req struct {
+				Plan string `json:"plan" binding:"required"`
+			}
+			if err := c.ShouldBindJSON(&req); err != nil {
+				c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+				return
+			}
+
+			// Mark as pro
+			if err := s.SetUserPro(userID, true); err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update subscription"})
+				return
+			}
+
+			c.JSON(http.StatusOK, gin.H{"message": "Subscribed to " + req.Plan})
+		})
 	}
+
+	// Contract analysis routes
+	contract := r.Group("/api/contract")
+	{
+		contract.POST("/analyze", func(c *gin.Context) {
+			tokenStr := strings.TrimPrefix(c.GetHeader("Authorization"), "Bearer ")
+
+			userID, err := auth.ParseToken(tokenStr)
+			if err != nil {
+				c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid token"})
+				return
+			}
+
+			var req struct {
+				Text string `json:"text" binding:"required"`
+			}
+			if err := c.ShouldBindJSON(&req); err != nil {
+				c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+				return
+			}
+
+			// Check quota
+			allowed, _, _ := s.CheckQuota(userID, "")
+			if !allowed {
+				c.JSON(http.StatusPaymentRequired, gin.H{"error": "Quota exceeded", "checkout_url": "/api/subscribe"})
+				return
+			}
+
+			// Analyze contract
+			clauses := nlp.AnalyzeKeywords(req.Text)
+			terms := nlp.ExtractKeyTerms(req.Text)
+
+			// Calculate risk score
+			score := 100
+			for _, clause := range clauses {
+				switch clause.Risk {
+				case nlp.RiskCritical:
+					score -= 25
+				case nlp.RiskHigh:
+					score -= 15
+				case nlp.RiskMedium:
+					score -= 5
+				}
+			}
+			if score < 0 {
+				score = 0
+			}
+
+			// Summarize
+			summary := buildSummary(clauses, terms)
+
+			// Increment usage
+			s.IncrementUsage(userID, 0)
+
+			c.JSON(http.StatusOK, gin.H{
+				"summary":           summary,
+				"dangerous_clauses": clauses,
+				"key_terms":         terms,
+				"score":             score,
+			})
+		})
+	}
+}
+
+func buildSummary(clauses []nlp.RiskClause, terms map[string]string) string {
+	var sb strings.Builder
+	sb.WriteString("Contract Analysis Summary:\n\n")
+
+	if len(clauses) > 0 {
+		sb.WriteString("## Risk Clauses Detected:\n")
+		for _, c := range clauses {
+			sb.WriteString(fmt.Sprintf("- [%s] %s\n", strings.ToUpper(c.Risk.String()), c.Term))
+			if c.Suggestion != "" {
+				sb.WriteString(fmt.Sprintf("  → %s\n", c.Suggestion))
+			}
+		}
+		sb.WriteString("\n")
+	}
+
+	sb.WriteString("## Key Terms:\n")
+	for k, v := range terms {
+		sb.WriteString(fmt.Sprintf("- %s: %s\n", k, v))
+	}
+
+	return sb.String()
 }

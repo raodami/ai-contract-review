@@ -220,7 +220,16 @@ func (s *Store) UpdateJobStatus(id, status, result string) error {
 	return err
 }
 
-// GetJob retrieves a job by ID
+// IncrementUsage is an alias for IncrementUserUsage
+func (s *Store) IncrementUsage(userID string, minutes int) error {
+	return s.IncrementUserUsage(userID, minutes)
+}
+
+// SetUserPro sets a user as pro subscriber
+func (s *Store) SetUserPro(userID string, isPro bool) error {
+	_, err := s.db.Exec("UPDATE users SET is_pro = ? WHERE id = ?", isPro, userID)
+	return err
+}
 func (s *Store) GetJob(id string) (map[string]interface{}, error) {
 	var job struct {
 		ID        string `json:"id"`

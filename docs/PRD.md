@@ -1,59 +1,46 @@
-# PRD: AI Audio Tools SaaS
+# PRD: AI Contract Review SaaS
 
 ## 产品定位
-AI-powered audio processing platform for content creators, podcasters, and musicians.
+AI-powered contract analysis platform for SMBs, freelancers, and legal professionals.
 
 ## 目标用户画像
-- **播客主**：需要去噪、转文字、生成摘要
-- **音乐制作人**：人声分离、分轨处理
-- **视频创作者**：音频转录+字幕生成
-- **外语学习者**：TTS 语音合成
+- **中小企业主**：缺乏法务团队，需要快速审查合同风险
+- **自由职业者**：接单前审查客户合同条款
+- **初创公司**：融资协议、NDA、劳动合同审查
 
 ## MVP 功能范围
 
 ### 核心功能
-1. **Vocal Remover** — 人声分离（伴奏/ vocals）
-2. **Audio Transcription** — 音频转文字（Deepgram API）
-3. **Text Summary** — 转录文本 AI 摘要（DeepSeek API）
-4. **Text-to-Speech** — 多语言 TTS（ElevenLabs API）
-
-### 用户系统
-- 匿名用户：每日 30 分钟免费额度（Cookie 计数）
-- 注册用户：按订阅解锁更多额度
-- 付费墙：超出额度触发 Stripe Checkout
+1. **PDF/DOCX 上传** — 支持主流格式
+2. **风险条款识别** — AI 检测不公平条款、隐藏风险
+3. **智能摘要** — 关键条款提炼（金额、期限、违约条款）
+4. **风险评估报告** — 风险等级 + 建议修改方案
 
 ### 技术架构
 ```
-Go + SQLite (modernc) + DeepSeek + Deepgram + ElevenLabs
+Go + SQLite + DeepSeek LLM (法律分析)
 前端：Next.js 14 + Stripe 风格 UI
 部署：Docker + Render Blueprint
 ```
 
 ## 定价策略
-- **Free**: 30 min/月，基础功能
-- **Pro**: $9.9/月 或 $59/年（前端显示 $4.9/月）
-- **Team**: $29.9/月（多人协作）
+- **Free**: 3 次免费审查
+- **Pro**: $19.9/月 或 $99/年
+- **Team**: $49.9/月（多人协作 + 条款库）
+
+## 技术依赖
+- PDF 解析：`mohae/pdfreader` (纯Go) 或 `pdfcpu`
+- DOCX 解析：`unioffice/docx`
+- 法律 Prompt 工程：DeepSeek custom model
 
 ## 成功指标
-- MRR: $1,000 以内验证PMF
-- 转化率: 免费→付费 > 3%
-- 留存率: 30日 > 40%
-
-## 风险
-- API 成本波动（Deepgram ~$0.00014/sec, ElevenLabs ~$0.30/1k chars）
-- 视频平台集成（YouTube/TikTok）— 二期功能
+- MRR: $500 以内验证 PMF
+- 转化率: 免费→付费 > 5%
+- 准确率: 风险条款召回率 > 80%
 
 ## 竞品分析
 | 竞品 | 优势 | 劣势 |
 |------|------|------|
-| Clumi AI | +3140% 增长 | 仅 vocal remover |
-| Descript | 全功能 | 功能臃肿，$16/月 |
-| Lalal.ai | 专注分离 | 无 TTS/ASR |
-
-## 差异化
-- **All-in-one**: 分离 + 转录 + TTS 一站式
-- **低价**: $9.9/月 vs Descript $16/月
-- **API-first**: 支持开发者集成
-
-## 下一步
-写实施计划 → TDD 开发
+| Harvey AI | 大模型能力 | 仅面向律所，$200+/月 |
+| Clerky | 模板丰富 | 无 AI 审查 |
+| LawDepot | 模板多 | 无智能分析 |
