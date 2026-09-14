@@ -11,6 +11,7 @@ export default function Dashboard() {
   const [result, setResult] = useState<any>(null);
   const [selectedJob, setSelectedJob] = useState<any>(null);
   const [analyzing, setAnalyzing] = useState(false);
+  const [analytics, setAnalytics] = useState<any>(null);
 
   useEffect(() => {
     const token = localStorage.getItem('token');
@@ -23,10 +24,25 @@ export default function Dashboard() {
       .then(data => {
         setUser(data);
         loadJobs();
+        loadAnalytics(token);
       })
       .catch(() => router.push('/login'))
       .finally(() => setLoading(false));
   }, []);
+
+  const loadAnalytics = async (token: string) => {
+    try {
+      const res = await fetch('/api/analytics', {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setAnalytics(data);
+      }
+    } catch (e) {
+      console.error('Failed to load analytics', e);
+    }
+  };
 
   const loadJobs = async () => {
     const token = localStorage.getItem('token');
@@ -171,6 +187,83 @@ export default function Dashboard() {
     <div style={{ padding: 40, maxWidth: 900, margin: '0 auto' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 32 }}>
         <h1 style={{ fontSize: 28, color: '#f8fafc' }}>Contract Review Dashboard</h1>
+        {user && (
+          <div style={{ textAlign: 'right' }}>
+            <div style={{ color: user.is_pro ? '#533afd' : '#e2e8f0', fontSize: 14, fontWeight: 500 }}>
+              {user.is_pro ? '★ Pro Plan' : 'Free Plan'}
+            </div>
+            <div style={{ color: '#8899a6', fontSize: 12 }}>
+              {user.remaining_min ?? 30} min remaining
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Analytics Overview */}
+      {analytics && (
+        <div style={{ marginBottom: 24 }}>
+          <h3 style={{ marginBottom: 16, color: '#f8fafc' }}>Usage Analytics</h3>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 16 }}>
+            {/* Stats Cards */}
+            <div style={{ background: 'rgba(255,255,255,0.05)', borderRadius: 12, padding: 20 }}>
+              <div style={{ color: '#8899a6', fontSize: 13, marginBottom: 8 }}>Total Jobs</div>
+              <div style={{ fontSize: 32, fontWeight: 700, color: '#533afd' }}>{analytics.total_jobs}</div>
+            </div>
+            <div style={{ background: 'rgba(255,255,255,0.05)', borderRadius: 12, padding: 20 }}>
+              <div style={{ color: '#8899a6', fontSize: 13, marginBottom: 8 }}>Completed</div>
+              <div style={{ fontSize: 32, fontWeight: 700, color: '#22c55e' }}>{analytics.completed_jobs}</div>
+            </div>
+            <div style={{ background: 'rgba(255,255,255,0.05)', borderRadius: 12, padding: 20 }}>
+              <div style={{ color: '#8899a6', fontSize: 13, marginBottom: 8 }}>Avg Score</div>
+              <div style={{ fontSize: 32, fontWeight: 700, color: analytics.avg_score >= 70 ? '#22c55e' : '#f59e0b' }}>
+                {Math.round(analytics.avg_score)}
+              </div>
+            </div>
+            <div style={{ background: 'rgba(255,255,255,0.05)', borderRadius: 12, padding: 20 }}>
+              <div style={{ color: '#8899a6', fontSize: 13, marginBottom: 8 }}>Failed</div>
+              <div style={{ fontSize: 32, fontWeight: 700, color: '#ef4444' }}>{analytics.failed_jobs}</div>
+            </div>
+          </div>
+
+          {/* Score Distribution Bar */}
+          <div style={{ background: 'rgba(255,255,255,0.05)', borderRadius: 12, padding: 20, marginTop: 16 }}>
+            <div style={{ color: '#8899a6', fontSize: 13, marginBottom: 12 }}>Score Distribution (Last 30 Days)</div>
+            <div style={{ display: 'flex', height: 24, borderRadius: 6, overflow: 'hidden', gap: 2 }}>
+              <div style={{ width: `${analytics.score_distribution.low || 0}%`, background: '#22c55e', minWidth: 2 }} />
+              <div style={{ width: `${analytics.score_distribution.medium || 0}%`, background: '#f59e0b', minWidth: 2 }} />
+              <div style={{ width: `${analytics.score_distribution.high || 0}%`, background: '#ef4444', minWidth: 2 }} />
+            </div>
+            <div style={{ display: 'flex', gap: 16, marginTop: 8, fontSize: 12, color: '#8899a6' }}>
+              <span>✓ Low Risk ({analytics.score_distribution.low || 0})</span>
+              <span>⚠ Medium ({analytics.score_distribution.medium || 0})</span>
+              <span>✗ High Risk ({analytics.score_distribution.high || 0})</span>
+            </div>
+          </div>
+
+          {/* Job Trend Chart (Simple) */}
+          {analytics.job_trend && analytics.job_trend.length > 0 && (
+            <div style={{ background: 'rgba(255,255,255,0.05)', borderRadius: 12, padding: 20, marginTop: 16 }}>
+              <div style={{ color: '#8899a6', fontSize: 13, marginBottom: 12 }}>Job Activity Trend</div>
+              <div style={{ display: 'flex', alignItems: 'flex-end', gap: 8, height: 80 }}>
+                {analytics.job_trend.slice(-14).map((item: any, i: number) => (
+                  <div key={i} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4 }}>
+                    <div style={{
+                      width: '100%',
+                      background: '#533afd',
+                      borderRadius: 4,
+                      height: `${Math.min(100, (item.score / 100) * 80)}px`,
+                      minWidth: 8
+                    }} />
+                    <div style={{ fontSize: 10, color: '#8899a6' }}>
+                      {item.date.slice(5)}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
         {user && (
           <div style={{ textAlign: 'right' }}>
             <div style={{ color: user.is_pro ? '#533afd' : '#e2e8f0', fontSize: 14, fontWeight: 500 }}>

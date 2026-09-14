@@ -447,7 +447,25 @@ func SetupRoutes(r *gin.Engine, s *store.Store) {
 			}
 		})
 
-		// POST /api/contract/analyze — analyze text (for testing)
+	// GET /api/analytics — get usage statistics
+	userGroup.GET("/analytics", func(c *gin.Context) {
+		tokenStr := strings.TrimPrefix(c.GetHeader("Authorization"), "Bearer ")
+		userID, err := auth.ParseToken(tokenStr)
+		if err != nil {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid token"})
+			return
+		}
+
+		analytics, err := s.GetAnalytics(userID, 30)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get analytics"})
+			return
+		}
+
+		c.JSON(http.StatusOK, analytics)
+	})
+
+	// POST /api/contract/analyze — analyze text (for testing)
 		contract.POST("/analyze", func(c *gin.Context) {
 			tokenStr := strings.TrimPrefix(c.GetHeader("Authorization"), "Bearer ")
 			userID, err := auth.ParseToken(tokenStr)

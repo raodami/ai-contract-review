@@ -191,3 +191,33 @@ func TestListJobs(t *testing.T) {
 		t.Errorf("Expected 3 jobs, got %d", len(jobs))
 	}
 }
+
+func TestGetAnalytics(t *testing.T) {
+	s := newTestDB(t)
+	defer s.Close()
+
+	userID := uuid.New().String()
+	s.CreateUser(userID, "test@example.com", "pass")
+
+	// Create some jobs with results
+	for i := 0; i < 5; i++ {
+		jobID := uuid.New().String()
+		s.CreateJob(jobID, userID, "test.docx", 1000)
+		score := 60 + i*10
+		s.UpdateJobStatus(jobID, JobCompleted, `{"score":` + fmt.Sprintf("%d", score) + `,"summary":"test"}`)
+	}
+
+	analytics, err := s.GetAnalytics(userID, 30)
+	if err != nil {
+		t.Fatalf("GetAnalytics failed: %v", err)
+	}
+	if analytics.TotalJobs != 5 {
+		t.Errorf("Expected 5 jobs, got %d", analytics.TotalJobs)
+	}
+	if analytics.CompletedJobs != 5 {
+		t.Errorf("Expected 5 completed jobs, got %d", analytics.CompletedJobs)
+	}
+	if analytics.AvgScore < 60 || analytics.AvgScore > 100 {
+		t.Errorf("Expected avg score around 80, got %f", analytics.AvgScore)
+	}
+}
