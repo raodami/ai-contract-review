@@ -264,17 +264,6 @@ export default function Dashboard() {
           )}
         </div>
       )}
-        {user && (
-          <div style={{ textAlign: 'right' }}>
-            <div style={{ color: user.is_pro ? '#533afd' : '#e2e8f0', fontSize: 14, fontWeight: 500 }}>
-              {user.is_pro ? '★ Pro Plan' : 'Free Plan'}
-            </div>
-            <div style={{ color: '#8899a6', fontSize: 12 }}>
-              {user.remaining_min ?? 30} min remaining
-            </div>
-          </div>
-        )}
-      </div>
 
       {/* Upload Section */}
       <div style={{ background: 'rgba(255,255,255,0.05)', borderRadius: 12, padding: 24, marginBottom: 24 }}>
