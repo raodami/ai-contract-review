@@ -60,7 +60,6 @@ export default function Dashboard() {
       });
       const data = await res.json();
       if (res.ok) {
-        // Poll for completion
         const jobId = data.job_id;
         if (jobId && token) {
           setTimeout(() => checkJobStatus(jobId, token), 2000);
@@ -81,19 +80,12 @@ export default function Dashboard() {
         headers: { Authorization: `Bearer ${token}` }
       });
       if (res.ok) {
-        const job = await res.json();
-        if (job.status === 'completed') {
-          setSelectedJob(job);
-          setResult(JSON.parse(job.result));
-          loadJobs();
-          return;
-        }
-        if (job.status === 'processing') {
-          setTimeout(() => checkJobStatus(jobId, token), 2000);
-        }
+        const data = await res.json();
+        setResult(data.result ? JSON.parse(data.result) : null);
+        loadJobs();
       }
     } catch (e) {
-      console.error('Failed to check job status', e);
+      console.error('Failed to get result', e);
     }
   };
 
@@ -104,11 +96,9 @@ export default function Dashboard() {
         headers: { Authorization: `Bearer ${token}` }
       });
       if (res.ok) {
-        const job = await res.json();
-        setSelectedJob(job);
-        if (job.result) {
-          setResult(JSON.parse(job.result));
-        }
+        const data = await res.json();
+        setSelectedJob(data);
+        setResult(data.result ? JSON.parse(data.result) : null);
       }
     } catch (e) {
       console.error('Failed to fetch job', e);
@@ -116,25 +106,17 @@ export default function Dashboard() {
   };
 
   const analyzeText = async () => {
-    const token = localStorage.getItem('token');
-    if (!token) return;
-    
-    const text = prompt('Enter contract text to analyze:');
-    if (!text) return;
-    
+    const sampleText = "This Employment Agreement is entered into between TechCorp Inc. and John Doe. The Employee shall receive a salary of $75,000 per year, paid bi-weekly. Benefits include health insurance and 20 days PTO. Probation period of 90 days applies. Non-compete clause restricts employment with competitors within 50 miles for 2 years. Either party may terminate with 30 days written notice.";
     setAnalyzing(true);
     try {
-      const res = await fetch('/api/contract/analyze', {
+      const res = await fetch('/api/contract/upload', {
         method: 'POST',
-        headers: { 
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}` 
-        },
-        body: JSON.stringify({ text }),
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text: sampleText }),
       });
       if (res.ok) {
         const data = await res.json();
-        setResult(data);
+        setResult(data.result);
       }
     } catch (e) {
       console.error('Analysis failed', e);
@@ -153,7 +135,19 @@ export default function Dashboard() {
 
   return (
     <div style={{ padding: 40, maxWidth: 900, margin: '0 auto' }}>
-      <h1 style={{ marginBottom: 32, fontSize: 28 }}>Contract Review Dashboard</h1>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 32 }}>
+        <h1 style={{ fontSize: 28, color: '#f8fafc' }}>Contract Review Dashboard</h1>
+        {user && (
+          <div style={{ textAlign: 'right' }}>
+            <div style={{ color: user.is_pro ? '#533afd' : '#e2e8f0', fontSize: 14, fontWeight: 500 }}>
+              {user.is_pro ? '★ Pro Plan' : 'Free Plan'}
+            </div>
+            <div style={{ color: '#8899a6', fontSize: 12 }}>
+              {user.remaining_min ?? 30} min remaining
+            </div>
+          </div>
+        )}
+      </div>
 
       {/* Upload Section */}
       <div style={{ background: 'rgba(255,255,255,0.05)', borderRadius: 12, padding: 24, marginBottom: 24 }}>
@@ -173,7 +167,7 @@ export default function Dashboard() {
 
       {/* Text Analysis */}
       <div style={{ background: 'rgba(255,255,255,0.05)', borderRadius: 12, padding: 24, marginBottom: 24 }}>
-        <h3 style={{ marginBottom: 16 }}>Analyze Text</h3>
+        <h3 style={{ marginBottom: 16 }}>Analyze Sample Text</h3>
         <button
           onClick={analyzeText}
           disabled={analyzing}
@@ -186,7 +180,7 @@ export default function Dashboard() {
             cursor: analyzing ? 'not-allowed' : 'pointer',
           }}
         >
-          {analyzing ? 'Analyzing...' : 'Analyze Sample Text'}
+          {analyzing ? 'Analyzing...' : 'Analyze Sample Employment Contract'}
         </button>
       </div>
 
@@ -318,7 +312,7 @@ export default function Dashboard() {
           )}
 
           {/* Suggestions */}
-          {result.suggestions && result.suggestions.length > 0 && ("suggestions" in result) && (
+          {result.suggestions && result.suggestions.length > 0 && ('suggestions' in result) && (
             <div>
               <h4 style={{ marginBottom: 12, color: '#f8fafc' }}>Suggestions</h4>
               <ul style={{ color: '#e2e8f0', paddingLeft: 20, lineHeight: 1.8 }}>

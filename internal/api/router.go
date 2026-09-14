@@ -14,6 +14,7 @@ import (
 	"ai-contract-review/internal/nlp"
 	"ai-contract-review/internal/parser"
 	"ai-contract-review/internal/store"
+	"ai-contract-review/internal/payment"
 )
 
 // RegisterRequest represents a register request
@@ -153,17 +154,31 @@ func SetupRoutes(r *gin.Engine, s *store.Store) {
 	userGroup := r.Group("/api/user")
 	{
 		userGroup.GET("/usage", func(c *gin.Context) {
-			allowed, remaining, _ := s.CheckQuota("", "")
+			tokenStr := strings.TrimPrefix(c.GetHeader("Authorization"), "Bearer ")
+			userID, err := auth.ParseToken(tokenStr)
+			if err != nil {
+				c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid token"})
+				return
+			}
+			user, _ := s.GetUserByID(userID)
+			if user == nil {
+				c.JSON(http.StatusUnauthorized, gin.H{"error": "User not found"})
+				return
+			}
+			allowed, remaining, limit := payment.CheckQuota(user.IsPro, user.UsageMin)
 			c.JSON(http.StatusOK, gin.H{
+				"id":            user.ID,
+				"is_pro":        user.IsPro,
 				"allowed":       allowed,
 				"remaining_min": remaining,
-				"free_quota":    store.FreeQuota,
+				"usage_minutes": user.UsageMin,
+				"quota_limit":   limit,
+				"free_quota":    payment.FreeQuotaMinutes,
 			})
 		})
 
 		userGroup.PUT("/subscribe", func(c *gin.Context) {
 			tokenStr := strings.TrimPrefix(c.GetHeader("Authorization"), "Bearer ")
-
 			userID, err := auth.ParseToken(tokenStr)
 			if err != nil {
 				c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid token"})
@@ -178,13 +193,79 @@ func SetupRoutes(r *gin.Engine, s *store.Store) {
 				return
 			}
 
-			// Mark as pro
 			if err := s.SetUserPro(userID, true); err != nil {
 				c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update subscription"})
 				return
 			}
 
 			c.JSON(http.StatusOK, gin.H{"message": "Subscribed to " + req.Plan})
+		})
+	}
+
+	// Payment routes
+	paymentGroup := r.Group("/api/payment")
+	{
+		// GET /api/payment/plans - list available plans
+		paymentGroup.GET("/plans", func(c *gin.Context) {
+			c.JSON(http.StatusOK, gin.H{"plans": payment.GetPlans()})
+		})
+
+		// POST /api/payment/checkout - create checkout session
+		paymentGroup.POST("/checkout", func(c *gin.Context) {
+			tokenStr := strings.TrimPrefix(c.GetHeader("Authorization"), "Bearer ")
+			userID, err := auth.ParseToken(tokenStr)
+			if err != nil {
+				c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid token"})
+				return
+			}
+
+			var req struct {
+				PlanID string `json:"plan_id" binding:"required"`
+			}
+			if err := c.ShouldBindJSON(&req); err != nil {
+				c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+				return
+			}
+
+			user, _ := s.GetUserByID(userID)
+			email := ""
+			if user != nil {
+				email = user.Email
+			}
+
+			sessionURL, err := payment.CheckoutSession(payment.CheckoutSessionInput{
+				UserID: userID,
+				Email:  email,
+				PlanID: req.PlanID,
+				SuccessURL: "https://your-domain.com/dashboard?success=true",
+				CancelURL:  "https://your-domain.com/pricing?canceled=true",
+			})
+			if err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+				return
+			}
+
+			c.JSON(http.StatusOK, gin.H{
+				"checkout_url": sessionURL,
+				"plan_id":      req.PlanID,
+			})
+		})
+
+		// POST /api/payment/webhook - Stripe webhook
+		paymentGroup.POST("/webhook", func(c *gin.Context) {
+			body, err := io.ReadAll(c.Request.Body)
+			if err != nil {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "Failed to read body"})
+				return
+			}
+
+			event, err := payment.WebhookHandler(body)
+			if err != nil {
+				c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+				return
+			}
+
+			c.JSON(http.StatusOK, gin.H{"status": event})
 		})
 	}
 
