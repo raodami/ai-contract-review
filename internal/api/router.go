@@ -282,7 +282,7 @@ func SetupRoutes(r *gin.Engine, s *store.Store) {
 				return
 			}
 
-			allowed, _, _ := s.CheckQuota(userID, "")
+			allowed, remaining, limit := payment.CheckQuota(false, 0)
 			if !allowed {
 				c.JSON(http.StatusPaymentRequired, gin.H{"error": "Quota exceeded", "checkout_url": "/api/subscribe"})
 				return
@@ -298,60 +298,75 @@ func SetupRoutes(r *gin.Engine, s *store.Store) {
 				c.JSON(http.StatusBadRequest, gin.H{"error": "No file uploaded"})
 				return
 			}
-			file, err := files[0].Open()
-			if err != nil {
-				c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to open file"})
-				return
-			}
-			defer file.Close()
 
-			data, err := io.ReadAll(file)
-			if err != nil {
-				c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to read file"})
-				return
-			}
-			if len(data) > 10*1024*1024 {
-				c.JSON(http.StatusRequestEntityTooLarge, gin.H{"error": "File too large (max 10MB)"})
-				return
-			}
-
-			jobID := uuid.New().String()
-			fileName := files[0].Filename
-			if err := s.CreateJob(jobID, userID, fileName, int64(len(data))); err != nil {
-				c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create job"})
-				return
-			}
-
-			text, err := parser.ParseDOCX(data)
-			if err != nil {
-				// Try PDF parsing as fallback
-				if parser.IsPDF(data) {
-					text, err = parser.ParsePDF(data)
+			var results []map[string]any
+			for _, file := range files {
+				f, err := file.Open()
+				if err != nil {
+					results = append(results, map[string]any{"file": file.Filename, "error": "Failed to open"})
+					continue
 				}
-			}
-			if err != nil {
-				s.UpdateJobStatus(jobID, store.JobFailed, fmt.Sprintf("parse error: %v", err))
-				c.JSON(http.StatusBadRequest, gin.H{"error": "Failed to parse file: " + err.Error(), "job_id": jobID})
-				return
-			}
-			if err := s.UpdateJobContent(jobID, text); err != nil {
-				c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to save content"})
-				return
-			}
-			s.UpdateJobStatus(jobID, store.JobProcessing, "")
 
-			client := llm.NewDeepSeekClient()
-			analysis, err := client.AnalyzeContract(text)
-			if err != nil {
-				s.UpdateJobStatus(jobID, store.JobFailed, fmt.Sprintf("ai error: %v", err))
-				c.JSON(http.StatusInternalServerError, gin.H{"error": "AI analysis failed"})
-				return
-			}
-			resultJSON, _ := json.Marshal(analysis)
-			s.UpdateJobStatus(jobID, store.JobCompleted, string(resultJSON))
-			s.IncrementUserUsage(userID, 0)
+				data, err := io.ReadAll(f)
+				f.Close()
+				if err != nil {
+					results = append(results, map[string]any{"file": file.Filename, "error": "Failed to read"})
+					continue
+				}
+				if len(data) > 10*1024*1024 {
+					results = append(results, map[string]any{"file": file.Filename, "error": "File too large (max 10MB)"})
+					continue
+				}
 
-			c.JSON(http.StatusOK, gin.H{"job_id": jobID, "status": "completed"})
+				jobID := uuid.New().String()
+				if err := s.CreateJob(jobID, userID, file.Filename, int64(len(data))); err != nil {
+					results = append(results, map[string]any{"file": file.Filename, "job_id": jobID, "error": "Failed to create job"})
+					continue
+				}
+
+				text, err := parser.ParseDOCX(data)
+				if err != nil {
+					if parser.IsPDF(data) {
+						text, err = parser.ParsePDF(data)
+					}
+				}
+				if err != nil {
+					s.UpdateJobStatus(jobID, store.JobFailed, fmt.Sprintf("parse error: %v", err))
+					results = append(results, map[string]any{"file": file.Filename, "job_id": jobID, "error": "Parse failed"})
+					continue
+				}
+				if err := s.UpdateJobContent(jobID, text); err != nil {
+					s.UpdateJobStatus(jobID, store.JobFailed, "save error")
+					results = append(results, map[string]any{"file": file.Filename, "job_id": jobID, "error": "Save failed"})
+					continue
+				}
+				s.UpdateJobStatus(jobID, store.JobProcessing, "")
+
+				client := llm.NewDeepSeekClient()
+				analysis, err := client.AnalyzeContract(text)
+				if err != nil {
+					s.UpdateJobStatus(jobID, store.JobFailed, fmt.Sprintf("ai error: %v", err))
+					results = append(results, map[string]any{"file": file.Filename, "job_id": jobID, "error": "AI failed"})
+					continue
+				}
+				resultJSON, _ := json.Marshal(analysis)
+				s.UpdateJobStatus(jobID, store.JobCompleted, string(resultJSON))
+				s.IncrementUserUsage(userID, 0)
+
+				results = append(results, map[string]any{"file": file.Filename, "job_id": jobID, "status": "completed"})
+			}
+
+			newRemaining := remaining - len(files)
+			if newRemaining < 0 {
+				newRemaining = 0
+			}
+
+			c.JSON(http.StatusOK, gin.H{
+				"jobs":         results,
+				"total":        len(results),
+				"remaining_min": newRemaining,
+				"quota_limit":  limit,
+			})
 		})
 
 		// GET /api/contract/jobs — list recent jobs

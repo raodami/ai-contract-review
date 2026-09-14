@@ -60,10 +60,21 @@ export default function Dashboard() {
       });
       const data = await res.json();
       if (res.ok) {
-        const jobId = data.job_id;
-        if (jobId && token) {
-          setTimeout(() => checkJobStatus(jobId, token), 2000);
+        // Handle batch results
+        const jobs = data.jobs || [];
+        if (jobs.length === 1) {
+          const jobId = jobs[0].job_id;
+          if (jobId && token) {
+            setTimeout(() => checkJobStatus(jobId, token), 2000);
+          }
         }
+        // Show batch summary
+        const completed = jobs.filter((j: any) => j.status === 'completed').length;
+        const failed = jobs.filter((j: any) => j.error).length;
+        if (completed > 0 || failed > 0) {
+          alert(`Batch complete: ${completed} succeeded, ${failed} failed. Remaining quota: ${data.remaining_min} min`);
+        }
+        loadJobs();
       } else {
         alert('Error: ' + (data.error || 'Unknown error'));
       }
@@ -180,11 +191,12 @@ export default function Dashboard() {
           accept=".docx,.pdf"
           onChange={handleUpload}
           disabled={uploading}
+          multiple
           style={{ marginBottom: 16, display: 'block', color: '#8899a6' }}
         />
         {uploading && <p style={{ color: '#533afd' }}>Processing...</p>}
         <p style={{ color: '#8899a6', fontSize: 14 }}>
-          Max 10MB. AI analysis runs automatically.
+          Max 10MB per file. Support multiple files for batch analysis.
         </p>
       </div>
 
