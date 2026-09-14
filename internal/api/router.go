@@ -15,6 +15,7 @@ import (
 	"ai-contract-review/internal/parser"
 	"ai-contract-review/internal/store"
 	"ai-contract-review/internal/payment"
+	"ai-contract-review/internal/export"
 )
 
 // RegisterRequest represents a register request
@@ -384,6 +385,47 @@ func SetupRoutes(r *gin.Engine, s *store.Store) {
 				return
 			}
 			c.JSON(http.StatusOK, job)
+		})
+
+		// GET /api/contract/export/:id?format=text — export analysis report
+		contract.GET("/export/:id", func(c *gin.Context) {
+			tokenStr := strings.TrimPrefix(c.GetHeader("Authorization"), "Bearer ")
+			userID, _ := auth.ParseToken(tokenStr)
+			jobID := c.Param("id")
+			format := c.Query("format")
+			if format == "" {
+				format = "text"
+			}
+
+			job, err := s.GetJob(jobID)
+			if err != nil {
+				c.JSON(http.StatusNotFound, gin.H{"error": "Job not found"})
+				return
+			}
+			if job.UserID != userID {
+				c.JSON(http.StatusForbidden, gin.H{"error": "Access denied"})
+				return
+			}
+
+			var result map[string]any
+			if job.Result != "" {
+				json.Unmarshal([]byte(job.Result), &result)
+			}
+
+			reportData := export.NewReportData(job.FileName, job.FileSize, result)
+			opts := export.ExportOptions{Format: format}
+			filename, content := export.GenerateExport(reportData, opts)
+
+			c.Header("Content-Disposition", fmt.Sprintf("attachment; filename=%s", filename))
+			if format == "html" {
+				c.Data(http.StatusOK, "text/html; charset=utf-8", []byte(content))
+			} else if format == "json" {
+				c.Data(http.StatusOK, "application/json; charset=utf-8", []byte(content))
+			} else if format == "csv" {
+				c.Data(http.StatusOK, "text/csv; charset=utf-8", []byte(content))
+			} else {
+				c.Data(http.StatusOK, "text/plain; charset=utf-8", []byte(content))
+			}
 		})
 
 		// POST /api/contract/analyze — analyze text (for testing)

@@ -105,8 +105,31 @@ export default function Dashboard() {
     }
   };
 
+  const downloadExport = async (format: string) => {
+    if (!selectedJob) {
+      alert('Please select a job from the history first');
+      return;
+    }
+    const token = localStorage.getItem('token');
+    const res = await fetch(`/api/contract/export/${selectedJob.id}?format=${format}`, {
+      headers: { Authorization: `Bearer ${token}` }
+    });
+    if (res.ok) {
+      const blob = await res.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = res.headers.get('content-disposition')?.split('filename=')[1] || `report.${format}`;
+      document.body.appendChild(a);
+      a.click();
+      window.URL.revokeObjectURL(url);
+      document.body.removeChild(a);
+    }
+  };
+
   const analyzeText = async () => {
     const sampleText = "This Employment Agreement is entered into between TechCorp Inc. and John Doe. The Employee shall receive a salary of $75,000 per year, paid bi-weekly. Benefits include health insurance and 20 days PTO. Probation period of 90 days applies. Non-compete clause restricts employment with competitors within 50 miles for 2 years. Either party may terminate with 30 days written notice.";
+    setAnalyzing(true);
     setAnalyzing(true);
     try {
       const res = await fetch('/api/contract/upload', {
@@ -187,7 +210,20 @@ export default function Dashboard() {
       {/* Result Section */}
       {result && (
         <div style={{ background: 'rgba(255,255,255,0.05)', borderRadius: 12, padding: 24, marginBottom: 24 }}>
-          <h3 style={{ marginBottom: 16 }}>Analysis Result</h3>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+            <h3 style={{ margin: 0 }}>Analysis Result</h3>
+            <div style={{ display: 'flex', gap: 8 }}>
+              <button onClick={() => downloadExport('text')} style={{ padding: '8px 16px', background: 'rgba(255,255,255,0.1)', border: '1px solid rgba(255,255,255,0.2)', borderRadius: 6, color: '#e2e8f0', cursor: 'pointer', fontSize: 13 }}>
+                📄 Text
+              </button>
+              <button onClick={() => downloadExport('html')} style={{ padding: '8px 16px', background: 'rgba(255,255,255,0.1)', border: '1px solid rgba(255,255,255,0.2)', borderRadius: 6, color: '#e2e8f0', cursor: 'pointer', fontSize: 13 }}>
+                🌐 HTML
+              </button>
+              <button onClick={() => downloadExport('json')} style={{ padding: '8px 16px', background: 'rgba(255,255,255,0.1)', border: '1px solid rgba(255,255,255,0.2)', borderRadius: 6, color: '#e2e8f0', cursor: 'pointer', fontSize: 13 }}>
+                📋 JSON
+              </button>
+            </div>
+          </div>
           
           {/* Score */}
           <div style={{ marginBottom: 24, textAlign: 'center' }}>
