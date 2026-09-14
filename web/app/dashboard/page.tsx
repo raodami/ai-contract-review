@@ -4,12 +4,12 @@ import { useRouter } from 'next/navigation';
 
 export default function Dashboard() {
   const router = useRouter();
-  const [user, setUser] = useState(null);
+  const [user, setUser] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [uploading, setUploading] = useState(false);
-  const [jobs, setJobs] = useState([]);
-  const [result, setResult] = useState(null);
-  const [selectedJob, setSelectedJob] = useState(null);
+  const [jobs, setJobs] = useState<any[]>([]);
+  const [result, setResult] = useState<any>(null);
+  const [selectedJob, setSelectedJob] = useState<any>(null);
 
   useEffect(() => {
     const token = localStorage.getItem('token');
@@ -42,8 +42,8 @@ export default function Dashboard() {
     }
   };
 
-  const handleUpload = async (e) => {
-    const file = e.target.files[0];
+  const handleUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
     if (!file) return;
 
     const token = localStorage.getItem('token');
@@ -64,14 +64,14 @@ export default function Dashboard() {
       } else {
         alert('Error: ' + (data.error || 'Unknown error'));
       }
-    } catch (err) {
-      alert('Upload failed: ' + err.message);
+    } catch (err: any) {
+      alert('Upload failed: ' + (err.message || String(err)));
     } finally {
       setUploading(false);
     }
   };
 
-  const fetchJobResult = async (jobId) => {
+  const fetchJobResult = async (jobId: string) => {
     const token = localStorage.getItem('token');
     try {
       const res = await fetch(`/api/contract/jobs/${jobId}`, {
@@ -139,7 +139,7 @@ export default function Dashboard() {
           {result.risks && result.risks.length > 0 && (
             <div>
               <h4 style={{ marginBottom: 8, color: '#f8fafc' }}>Detected Risks:</h4>
-              {result.risks.map((risk, i) => (
+              {result.risks.map((risk: any, i: number) => (
                 <div key={i} style={{
                   padding: 12,
                   marginBottom: 8,
@@ -158,7 +158,7 @@ export default function Dashboard() {
             <div>
               <h4 style={{ marginBottom: 8, color: '#f8fafc' }}>Suggestions:</h4>
               <ul style={{ color: '#e2e8f0', paddingLeft: 20 }}>
-                {result.suggestions.map((s, i) => <li key={i}>{s}</li>)}
+                {result.suggestions.map((s: string, i: number) => <li key={i}>{s}</li>)}
               </ul>
             </div>
           )}
@@ -172,7 +172,7 @@ export default function Dashboard() {
           <p style={{ color: '#8899a6' }}>No contracts analyzed yet. Upload one above!</p>
         ) : (
           <div>
-            {jobs.map(job => (
+            {jobs.map((job: any) => (
               <div
                 key={job.id}
                 onClick={() => fetchJobResult(job.id)}
