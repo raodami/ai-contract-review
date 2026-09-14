@@ -8,48 +8,68 @@ import (
 // Enhanced contract analysis with clause classification and compliance checks
 func AnalyzeContractEnhanced(text string) *EnhancedAnalysis {
 	analysis := &EnhancedAnalysis{}
-	
+
 	// Risk analysis
 	clauses := AnalyzeKeywords(text)
 	analysis.Risks = convertToRiskItems(clauses)
-	
+
 	// Extract key terms
 	terms := ExtractKeyTerms(text)
 	analysis.KeyTerms = terms
-	
+
 	// Clause classification
 	analysis.Clauses = classifyClauses(text)
-	
+
 	// Liability analysis
 	liability := analyzeLiability(text)
 	analysis.Liability = liability
-	
+
 	// Compliance checks
 	compliance := checkCompliance(text)
 	analysis.Compliance = compliance
-	
-	// Calculate score
-	analysis.Score = calculateScore(clauses, compliance)
-	
+
+	// Scenario analysis (contract type detection + type-specific checks)
+	scenario := analyzeScenario(text)
+	analysis.Scenario = scenario
+
+	// Calculate score with scenario adjustment
+	baseScore := calculateScore(clauses, compliance)
+	scoreAdjust := scenario.ScoreAdjust
+	analysis.Score = baseScore + scoreAdjust
+	if analysis.Score < 0 {
+		analysis.Score = 0
+	}
+	if analysis.Score > 100 {
+		analysis.Score = 100
+	}
+
 	// Generate suggestions
 	analysis.Suggestions = generateSuggestions(clauses, compliance)
-	
+
+	// Add scenario-specific suggestions
+	for _, issue := range scenario.Issues {
+		if !issue.Found && issue.Recommend != "" {
+			analysis.Suggestions = append(analysis.Suggestions, issue.Recommend)
+		}
+	}
+
 	// Generate summary
 	analysis.Summary = generateSummary(analysis)
-	
+
 	return analysis
 }
 
 // EnhancedAnalysis contains full analysis result
 type EnhancedAnalysis struct {
-	Summary      string           `json:"summary"`
-	Risks        []RiskItem       `json:"risks"`
-	KeyTerms     map[string]string `json:"key_terms"`
-	Clauses      []ClauseInfo     `json:"clauses"`
-	Liability    LiabilityAnalysis `json:"liability"`
-	Compliance   []ComplianceCheck `json:"compliance"`
-	Score        int              `json:"score"`
-	Suggestions  []string         `json:"suggestions"`
+	Summary     string            `json:"summary"`
+	Risks       []RiskItem        `json:"risks"`
+	KeyTerms    map[string]string `json:"key_terms"`
+	Clauses     []ClauseInfo      `json:"clauses"`
+	Liability   LiabilityAnalysis `json:"liability"`
+	Compliance  []ComplianceCheck `json:"compliance"`
+	Score       int               `json:"score"`
+	Suggestions []string          `json:"suggestions"`
+	Scenario    *ScenarioAnalysis `json:"scenario,omitempty"`
 }
 
 // RiskItem is a risk found in the contract

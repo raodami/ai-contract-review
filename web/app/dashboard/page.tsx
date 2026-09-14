@@ -318,12 +318,72 @@ export default function Dashboard() {
           )}
 
           {/* Suggestions */}
-          {result.suggestions && result.suggestions.length > 0 && (
+          {result.suggestions && result.suggestions.length > 0 && ("suggestions" in result) && (
             <div>
               <h4 style={{ marginBottom: 12, color: '#f8fafc' }}>Suggestions</h4>
               <ul style={{ color: '#e2e8f0', paddingLeft: 20, lineHeight: 1.8 }}>
                 {result.suggestions.map((s: string, i: number) => <li key={i}>{s}</li>)}
               </ul>
+            </div>
+          )}
+
+          {/* Scenario Analysis */}
+          {result.scenario && (
+            <div style={{ marginTop: 24 }}>
+              <h4 style={{ marginBottom: 12, color: '#f8fafc' }}>
+                {result.scenario.type_name || 'Contract Type Analysis'}
+              </h4>
+              {result.scenario.issues && result.scenario.issues.length > 0 && (
+                <div style={{ marginBottom: 16 }}>
+                  <div style={{ color: '#8899a6', fontSize: 12, marginBottom: 8 }}>Issues Found: {result.scenario.issues.filter((i: any) => !i.found).length}</div>
+                  {result.scenario.issues.map((issue: any, i: number) => (
+                    <div key={i} style={{
+                      padding: 12,
+                      marginBottom: 8,
+                      borderRadius: 8,
+                      background: issue.found ? 'rgba(34,197,94,0.05)' : 'rgba(239,68,68,0.05)',
+                      borderLeft: `4px solid ${issue.found ? '#22c55e' : '#ef4444'}`,
+                    }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
+                        <span style={{ color: '#e2e8f0', fontSize: 13 }}>{issue.title}</span>
+                        <span style={{
+                          fontSize: 10,
+                          padding: '2px 6px',
+                          borderRadius: 4,
+                          background: issue.found ? 'rgba(34,197,94,0.2)' : 'rgba(239,68,68,0.2)',
+                          color: issue.found ? '#22c55e' : '#ef4444',
+                        }}>
+                          {issue.found ? 'PRESENT' : 'MISSING'}
+                        </span>
+                      </div>
+                      {!issue.found && issue.recommend && (
+                        <div style={{ color: '#8899a6', fontSize: 12 }}>{issue.recommend}</div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+              {result.scenario.requirements && result.scenario.requirements.length > 0 && (
+                <div>
+                  <div style={{ color: '#8899a6', fontSize: 12, marginBottom: 8 }}>
+                    Required Clauses: {result.scenario.requirements.filter((r: any) => r.found).length}/{result.scenario.requirements.length}
+                  </div>
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+                    {result.scenario.requirements.map((req: any, i: number) => (
+                      <span key={i} style={{
+                        padding: '4px 10px',
+                        borderRadius: 12,
+                        fontSize: 11,
+                        background: req.found ? 'rgba(34,197,94,0.15)' : 'rgba(239,68,68,0.15)',
+                        color: req.found ? '#22c55e' : '#ef4444',
+                        border: '1px solid rgba(255,255,255,0.1)',
+                      }}>
+                        {req.found ? '✓' : '○'} {req.name}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
           )}
         </div>
