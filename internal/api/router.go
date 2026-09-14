@@ -2,13 +2,17 @@ package api
 
 import (
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+	"encoding/json"
 	"ai-contract-review/internal/auth"
+	"ai-contract-review/internal/llm"
 	"ai-contract-review/internal/nlp"
+	"ai-contract-review/internal/parser"
 	"ai-contract-review/internal/store"
 )
 
@@ -187,9 +191,117 @@ func SetupRoutes(r *gin.Engine, s *store.Store) {
 	// Contract analysis routes
 	contract := r.Group("/api/contract")
 	{
+		// POST /api/contract/upload — upload file, return job_id
+		contract.POST("/upload", func(c *gin.Context) {
+			tokenStr := strings.TrimPrefix(c.GetHeader("Authorization"), "Bearer ")
+			userID, err := auth.ParseToken(tokenStr)
+			if err != nil {
+				c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid token"})
+				return
+			}
+
+			allowed, _, _ := s.CheckQuota(userID, "")
+			if !allowed {
+				c.JSON(http.StatusPaymentRequired, gin.H{"error": "Quota exceeded", "checkout_url": "/api/subscribe"})
+				return
+			}
+
+			form, err := c.MultipartForm()
+			if err != nil {
+				c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+				return
+			}
+			files := form.File["file"]
+			if len(files) == 0 {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "No file uploaded"})
+				return
+			}
+			file, err := files[0].Open()
+			if err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to open file"})
+				return
+			}
+			defer file.Close()
+
+			data, err := io.ReadAll(file)
+			if err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to read file"})
+				return
+			}
+			if len(data) > 10*1024*1024 {
+				c.JSON(http.StatusRequestEntityTooLarge, gin.H{"error": "File too large (max 10MB)"})
+				return
+			}
+
+			jobID := uuid.New().String()
+			fileName := files[0].Filename
+			if err := s.CreateJob(jobID, userID, fileName, int64(len(data))); err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create job"})
+				return
+			}
+
+			text, err := parser.ParseDOCX(data)
+			if err != nil {
+				s.UpdateJobStatus(jobID, store.JobFailed, fmt.Sprintf("parse error: %v", err))
+				c.JSON(http.StatusBadRequest, gin.H{"error": "Failed to parse file: " + err.Error(), "job_id": jobID})
+				return
+			}
+			if err := s.UpdateJobContent(jobID, text); err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to save content"})
+				return
+			}
+			s.UpdateJobStatus(jobID, store.JobProcessing, "")
+
+			client := llm.NewDeepSeekClient()
+			analysis, err := client.AnalyzeContract(text)
+			if err != nil {
+				s.UpdateJobStatus(jobID, store.JobFailed, fmt.Sprintf("ai error: %v", err))
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "AI analysis failed"})
+				return
+			}
+			resultJSON, _ := json.Marshal(analysis)
+			s.UpdateJobStatus(jobID, store.JobCompleted, string(resultJSON))
+			s.IncrementUserUsage(userID, 0)
+
+			c.JSON(http.StatusOK, gin.H{"job_id": jobID, "status": "completed"})
+		})
+
+		// GET /api/contract/jobs — list recent jobs
+		contract.GET("/jobs", func(c *gin.Context) {
+			tokenStr := strings.TrimPrefix(c.GetHeader("Authorization"), "Bearer ")
+			userID, err := auth.ParseToken(tokenStr)
+			if err != nil {
+				c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid token"})
+				return
+			}
+			jobs, err := s.ListJobs(userID, 20)
+			if err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to list jobs"})
+				return
+			}
+			c.JSON(http.StatusOK, gin.H{"jobs": jobs})
+		})
+
+		// GET /api/contract/jobs/:id — get job result
+		contract.GET("/jobs/:id", func(c *gin.Context) {
+			tokenStr := strings.TrimPrefix(c.GetHeader("Authorization"), "Bearer ")
+			userID, _ := auth.ParseToken(tokenStr)
+			jobID := c.Param("id")
+			job, err := s.GetJob(jobID)
+			if err != nil {
+				c.JSON(http.StatusNotFound, gin.H{"error": "Job not found"})
+				return
+			}
+			if job.UserID != userID {
+				c.JSON(http.StatusForbidden, gin.H{"error": "Access denied"})
+				return
+			}
+			c.JSON(http.StatusOK, job)
+		})
+
+		// POST /api/contract/analyze — analyze text (for testing)
 		contract.POST("/analyze", func(c *gin.Context) {
 			tokenStr := strings.TrimPrefix(c.GetHeader("Authorization"), "Bearer ")
-
 			userID, err := auth.ParseToken(tokenStr)
 			if err != nil {
 				c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid token"})
@@ -204,18 +316,26 @@ func SetupRoutes(r *gin.Engine, s *store.Store) {
 				return
 			}
 
-			// Check quota
 			allowed, _, _ := s.CheckQuota(userID, "")
 			if !allowed {
 				c.JSON(http.StatusPaymentRequired, gin.H{"error": "Quota exceeded", "checkout_url": "/api/subscribe"})
 				return
 			}
 
-			// Analyze contract
+			client := llm.NewDeepSeekClient()
+			if client.IsConfigured() {
+				analysis, err := client.AnalyzeContract(req.Text)
+				if err != nil {
+					c.JSON(http.StatusInternalServerError, gin.H{"error": "AI analysis failed: " + err.Error()})
+					return
+				}
+				c.JSON(http.StatusOK, analysis)
+				return
+			}
+
+			// Fallback to keyword analysis
 			clauses := nlp.AnalyzeKeywords(req.Text)
 			terms := nlp.ExtractKeyTerms(req.Text)
-
-			// Calculate risk score
 			score := 100
 			for _, clause := range clauses {
 				switch clause.Risk {
@@ -230,15 +350,9 @@ func SetupRoutes(r *gin.Engine, s *store.Store) {
 			if score < 0 {
 				score = 0
 			}
-
-			// Summarize
-			summary := buildSummary(clauses, terms)
-
-			// Increment usage
-			s.IncrementUsage(userID, 0)
-
+			s.IncrementUserUsage(userID, 0)
 			c.JSON(http.StatusOK, gin.H{
-				"summary":           summary,
+				"summary":           buildSummary(clauses, terms),
 				"dangerous_clauses": clauses,
 				"key_terms":         terms,
 				"score":             score,

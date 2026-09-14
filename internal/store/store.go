@@ -31,6 +31,29 @@ type AnonymousSession struct {
 	CreatedAt  time.Time
 }
 
+// JobStatus represents job status
+type JobStatus string
+
+const (
+	JobPending    JobStatus = "pending"
+	JobProcessing JobStatus = "processing"
+	JobCompleted  JobStatus = "completed"
+	JobFailed     JobStatus = "failed"
+)
+
+// Job represents a contract analysis job
+type Job struct {
+	ID        string    `json:"id"`
+	UserID    string    `json:"user_id"`
+	FileName  string    `json:"file_name"`
+	FileSize  int64     `json:"file_size"`
+	Status    JobStatus `json:"status"`
+	Content   string    `json:"-"`
+	Result    string    `json:"result,omitempty"`
+	CreatedAt int64     `json:"created_at"`
+	UpdatedAt int64     `json:"updated_at"`
+}
+
 // NewDB creates a new database connection with schema
 func NewDB(path string) (*Store, error) {
 	db, err := sql.Open("sqlite", path)
@@ -38,7 +61,6 @@ func NewDB(path string) (*Store, error) {
 		return nil, err
 	}
 
-	// Create tables if not exist
 	schema := `
 	CREATE TABLE IF NOT EXISTS users (
 		id TEXT PRIMARY KEY,
@@ -61,10 +83,10 @@ func NewDB(path string) (*Store, error) {
 	CREATE TABLE IF NOT EXISTS jobs (
 		id TEXT PRIMARY KEY,
 		user_id TEXT,
-		cookie_hash TEXT,
 		file_name TEXT,
 		file_size INTEGER,
 		status TEXT DEFAULT 'pending',
+		content TEXT,
 		result TEXT,
 		created_at INTEGER NOT NULL,
 		updated_at INTEGER NOT NULL
@@ -133,6 +155,39 @@ func (s *Store) IncrementUserUsage(id string, minutes int) error {
 	return err
 }
 
+// SetUserPro sets a user as pro subscriber
+func (s *Store) SetUserPro(userID string, isPro bool) error {
+	_, err := s.db.Exec("UPDATE users SET is_pro = ? WHERE id = ?", isPro, userID)
+	return err
+}
+
+// FreeQuota returns the free quota in minutes
+const FreeQuota = 30
+
+// CheckQuota checks if user has remaining quota
+func (s *Store) CheckQuota(userID string, cookieHash string) (bool, int, error) {
+	if userID != "" {
+		user, err := s.GetUserByID(userID)
+		if err != nil {
+			return false, 0, err
+		}
+		if user.IsPro {
+			return true, -1, nil
+		}
+		return user.UsageMin < FreeQuota, FreeQuota - user.UsageMin, nil
+	}
+
+	if cookieHash != "" {
+		sess, err := s.GetOrCreateSession(cookieHash, "")
+		if err != nil {
+			return false, 0, err
+		}
+		return sess.UsageMin < FreeQuota, FreeQuota - sess.UsageMin, nil
+	}
+
+	return false, 0, nil
+}
+
 // GetOrCreateSession gets or creates an anonymous session
 func (s *Store) GetOrCreateSession(cookieHash, ip string) (*AnonymousSession, error) {
 	var sess AnonymousSession
@@ -143,7 +198,6 @@ func (s *Store) GetOrCreateSession(cookieHash, ip string) (*AnonymousSession, er
 	).Scan(&sess.ID, &sess.CookieHash, &sess.IP, &sess.UsageMin, &createdAt)
 
 	if err == sql.ErrNoRows {
-		// Create new session
 		sess = AnonymousSession{
 			ID:         uuid.New().String(),
 			CookieHash: cookieHash,
@@ -174,45 +228,44 @@ func (s *Store) IncrementSessionUsage(cookieHash string, minutes int) error {
 	return err
 }
 
-// FreeQuota returns the free quota in minutes
-const FreeQuota = 30
-
-// CheckQuota checks if user has remaining quota
-func (s *Store) CheckQuota(userID string, cookieHash string) (bool, int, error) {
-	if userID != "" {
-		user, err := s.GetUserByID(userID)
-		if err != nil {
-			return false, 0, err
-		}
-		if user.IsPro {
-			return true, -1, nil // unlimited for pro
-		}
-		return user.UsageMin < FreeQuota, FreeQuota - user.UsageMin, nil
-	}
-
-	if cookieHash != "" {
-		sess, err := s.GetOrCreateSession(cookieHash, "")
-		if err != nil {
-			return false, 0, err
-		}
-		return sess.UsageMin < FreeQuota, FreeQuota - sess.UsageMin, nil
-	}
-
-	return false, 0, nil
-}
-
-// CreateJob creates a new audio processing job
-func (s *Store) CreateJob(id, userID, cookieHash, fileName string, fileSize int64) error {
+// CreateJob creates a new contract analysis job
+func (s *Store) CreateJob(id, userID, fileName string, fileSize int64) error {
 	now := time.Now().Unix()
 	_, err := s.db.Exec(
-		"INSERT INTO jobs (id, user_id, cookie_hash, file_name, file_size, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, 'pending', ?, ?)",
-		id, userID, cookieHash, fileName, fileSize, now, now,
+		"INSERT INTO jobs (id, user_id, file_name, file_size, status, created_at, updated_at) VALUES (?, ?, ?, ?, 'pending', ?, ?)",
+		id, userID, fileName, fileSize, now, now,
 	)
 	return err
 }
 
-// UpdateJobStatus updates job status and result
-func (s *Store) UpdateJobStatus(id, status, result string) error {
+// UpdateJobContent updates job content
+func (s *Store) UpdateJobContent(id, content string) error {
+	_, err := s.db.Exec("UPDATE jobs SET content = ?, updated_at = ? WHERE id = ?", id, time.Now().Unix(), id)
+	return err
+}
+
+// GetJob retrieves a job by ID
+func (s *Store) GetJob(id string) (*Job, error) {
+	var job Job
+	var createdAt, updatedAt int64
+	var content sql.NullString
+	var result sql.NullString
+	err := s.db.QueryRow(
+		"SELECT id, user_id, file_name, file_size, status, content, result, created_at, updated_at FROM jobs WHERE id = ?",
+		id,
+	).Scan(&job.ID, &job.UserID, &job.FileName, &job.FileSize, &job.Status, &content, &result, &createdAt, &updatedAt)
+	if err != nil {
+		return nil, err
+	}
+	job.Content = content.String
+	job.Result = result.String
+	job.CreatedAt = createdAt
+	job.UpdatedAt = updatedAt
+	return &job, nil
+}
+
+// UpdateJobStatus updates job status and optional result
+func (s *Store) UpdateJobStatus(id string, status JobStatus, result string) error {
 	_, err := s.db.Exec(
 		"UPDATE jobs SET status = ?, result = ?, updated_at = ? WHERE id = ?",
 		status, result, time.Now().Unix(), id,
@@ -220,45 +273,29 @@ func (s *Store) UpdateJobStatus(id, status, result string) error {
 	return err
 }
 
-// IncrementUsage is an alias for IncrementUserUsage
-func (s *Store) IncrementUsage(userID string, minutes int) error {
-	return s.IncrementUserUsage(userID, minutes)
-}
-
-// SetUserPro sets a user as pro subscriber
-func (s *Store) SetUserPro(userID string, isPro bool) error {
-	_, err := s.db.Exec("UPDATE users SET is_pro = ? WHERE id = ?", isPro, userID)
-	return err
-}
-func (s *Store) GetJob(id string) (map[string]interface{}, error) {
-	var job struct {
-		ID        string `json:"id"`
-		UserID    string `json:"user_id"`
-		FileName  string `json:"file_name"`
-		FileSize  int64  `json:"file_size"`
-		Status    string `json:"status"`
-		Result    string `json:"result"`
-		CreatedAt int64  `json:"created_at"`
-		UpdatedAt int64  `json:"updated_at"`
-	}
-	// Initialize result to empty string to handle NULL
-	var result sql.NullString
-	err := s.db.QueryRow(
-		"SELECT id, user_id, file_name, file_size, status, result, created_at, updated_at FROM jobs WHERE id = ?",
-		id,
-	).Scan(&job.ID, &job.UserID, &job.FileName, &job.FileSize, &job.Status, &result, &job.CreatedAt, &job.UpdatedAt)
+// ListJobs returns recent jobs for a user
+func (s *Store) ListJobs(userID string, limit int) ([]*Job, error) {
+	rows, err := s.db.Query(
+		"SELECT id, user_id, file_name, file_size, status, result, created_at, updated_at FROM jobs WHERE user_id = ? ORDER BY created_at DESC LIMIT ?",
+		userID, limit,
+	)
 	if err != nil {
 		return nil, err
 	}
-	job.Result = result.String
-	return map[string]interface{}{
-		"id":         job.ID,
-		"user_id":    job.UserID,
-		"file_name":  job.FileName,
-		"file_size":  job.FileSize,
-		"status":     job.Status,
-		"result":     job.Result,
-		"created_at": job.CreatedAt,
-		"updated_at": job.UpdatedAt,
-	}, nil
+	defer rows.Close()
+
+	var jobs []*Job
+	for rows.Next() {
+		var job Job
+		var createdAt, updatedAt int64
+		var result sql.NullString
+		if err := rows.Scan(&job.ID, &job.UserID, &job.FileName, &job.FileSize, &job.Status, &result, &createdAt, &updatedAt); err != nil {
+			return nil, err
+		}
+		job.Result = result.String
+		job.CreatedAt = createdAt
+		job.UpdatedAt = updatedAt
+		jobs = append(jobs, &job)
+	}
+	return jobs, rows.Err()
 }

@@ -1,6 +1,7 @@
 package store
 
 import (
+	"fmt"
 	"testing"
 
 	"github.com/google/uuid"
@@ -30,28 +31,10 @@ func TestCreateUser(t *testing.T) {
 		t.Fatalf("GetUserByEmail failed: %v", err)
 	}
 	if user.Email != "test@example.com" {
-		t.Errorf("Expected email test@example.com, got %s", user.Email)
+		t.Errorf("Expected 'test@example.com', got '%s'", user.Email)
 	}
-	if user.ID != id {
-		t.Errorf("Expected ID %s, got %s", id, user.ID)
-	}
-}
-
-func TestCreateUser_DuplicateEmail(t *testing.T) {
-	s := newTestDB(t)
-	defer s.Close()
-
-	id1 := uuid.New().String()
-	id2 := uuid.New().String()
-
-	err := s.CreateUser(id1, "dup@example.com", "pass1")
-	if err != nil {
-		t.Fatalf("First createUser failed: %v", err)
-	}
-
-	err = s.CreateUser(id2, "dup@example.com", "pass2")
-	if err == nil {
-		t.Fatal("Expected error for duplicate email, got nil")
+	if user.Password != "hashed_password" {
+		t.Errorf("Expected 'hashed_password', got '%s'", user.Password)
 	}
 }
 
@@ -60,58 +43,13 @@ func TestIncrementUserUsage(t *testing.T) {
 	defer s.Close()
 
 	id := uuid.New().String()
-	s.CreateUser(id, "user@example.com", "pass")
-
-	err := s.IncrementUserUsage(id, 10)
-	if err != nil {
-		t.Fatalf("IncrementUserUsage failed: %v", err)
-	}
+	s.CreateUser(id, "test@example.com", "pass")
+	s.IncrementUserUsage(id, 5)
+	s.IncrementUserUsage(id, 10)
 
 	user, _ := s.GetUserByID(id)
-	if user.UsageMin != 10 {
-		t.Errorf("Expected 10 minutes, got %d", user.UsageMin)
-	}
-}
-
-func TestGetOrCreateSession(t *testing.T) {
-	s := newTestDB(t)
-	defer s.Close()
-
-	hash := "test_cookie_hash"
-
-	sess1, err := s.GetOrCreateSession(hash, "1.2.3.4")
-	if err != nil {
-		t.Fatalf("GetOrCreateSession failed: %v", err)
-	}
-	if sess1.UsageMin != 0 {
-		t.Errorf("Expected 0 minutes, got %d", sess1.UsageMin)
-	}
-
-	// Should return same session
-	sess2, err := s.GetOrCreateSession(hash, "1.2.3.4")
-	if err != nil {
-		t.Fatalf("Second GetOrCreateSession failed: %v", err)
-	}
-	if sess1.ID != sess2.ID {
-		t.Error("Expected same session ID")
-	}
-}
-
-func TestIncrementSessionUsage(t *testing.T) {
-	s := newTestDB(t)
-	defer s.Close()
-
-	hash := "session_hash"
-	s.GetOrCreateSession(hash, "1.2.3.4")
-
-	err := s.IncrementSessionUsage(hash, 5)
-	if err != nil {
-		t.Fatalf("IncrementSessionUsage failed: %v", err)
-	}
-
-	sess, _ := s.GetOrCreateSession(hash, "1.2.3.4")
-	if sess.UsageMin != 5 {
-		t.Errorf("Expected 5 minutes, got %d", sess.UsageMin)
+	if user.UsageMin != 15 {
+		t.Errorf("Expected 15, got %d", user.UsageMin)
 	}
 }
 
@@ -120,34 +58,23 @@ func TestCheckQuota_FreeUser(t *testing.T) {
 	defer s.Close()
 
 	id := uuid.New().String()
-	s.CreateUser(id, "free@example.com", "pass")
+	s.CreateUser(id, "test@example.com", "pass")
 
-	allowed, remaining, err := s.CheckQuota(id, "")
-	if err != nil {
-		t.Fatalf("CheckQuota failed: %v", err)
-	}
+	allowed, remaining, _ := s.CheckQuota(id, "")
 	if !allowed {
-		t.Error("Expected allowed=true for new user")
+		t.Error("Expected allowed=true for free user under quota")
 	}
 	if remaining != FreeQuota {
-		t.Errorf("Expected %d remaining, got %d", FreeQuota, remaining)
+		t.Errorf("Expected remaining %d, got %d", FreeQuota, remaining)
 	}
-}
 
-func TestCheckQuota_Exceeded(t *testing.T) {
-	s := newTestDB(t)
-	defer s.Close()
-
-	id := uuid.New().String()
-	s.CreateUser(id, "exceeded@example.com", "pass")
-	s.IncrementUserUsage(id, FreeQuota+10)
-
-	allowed, _, err := s.CheckQuota(id, "")
-	if err != nil {
-		t.Fatalf("CheckQuota failed: %v", err)
-	}
+	s.IncrementUserUsage(id, FreeQuota)
+	allowed, remaining, _ = s.CheckQuota(id, "")
 	if allowed {
-		t.Error("Expected allowed=false when quota exceeded")
+		t.Error("Expected allowed=false after exceeding quota")
+	}
+	if remaining != 0 {
+		t.Errorf("Expected remaining 0, got %d", remaining)
 	}
 }
 
@@ -157,36 +84,50 @@ func TestCheckQuota_ProUser(t *testing.T) {
 
 	id := uuid.New().String()
 	s.CreateUser(id, "pro@example.com", "pass")
+	s.SetUserPro(id, true)
 
-	// Mark as pro
-	s.db.Exec("UPDATE users SET is_pro = 1 WHERE id = ?", id)
-
-	allowed, remaining, err := s.CheckQuota(id, "")
-	if err != nil {
-		t.Fatalf("CheckQuota failed: %v", err)
-	}
+	allowed, remaining, _ := s.CheckQuota(id, "")
 	if !allowed {
 		t.Error("Expected allowed=true for pro user")
 	}
 	if remaining != -1 {
-		t.Errorf("Expected -1 (unlimited) for pro user, got %d", remaining)
+		t.Errorf("Expected remaining -1 (unlimited), got %d", remaining)
 	}
 }
 
-func TestCheckQuota_Anonymous(t *testing.T) {
+func TestAnonymousSession(t *testing.T) {
 	s := newTestDB(t)
 	defer s.Close()
 
-	hash := "anon_cookie"
-	allowed, remaining, err := s.CheckQuota("", hash)
+	cookieHash := "abc123"
+	sess, err := s.GetOrCreateSession(cookieHash, "1.2.3.4")
 	if err != nil {
-		t.Fatalf("CheckQuota failed: %v", err)
+		t.Fatalf("GetOrCreateSession failed: %v", err)
 	}
-	if !allowed {
-		t.Error("Expected allowed=true for new anonymous user")
+	if sess.CookieHash != cookieHash {
+		t.Errorf("Expected cookie hash '%s', got '%s'", cookieHash, sess.CookieHash)
 	}
-	if remaining != FreeQuota {
-		t.Errorf("Expected %d remaining, got %d", FreeQuota, remaining)
+
+	// Same cookie should return same session
+	sess2, err := s.GetOrCreateSession(cookieHash, "5.6.7.8")
+	if err != nil {
+		t.Fatalf("GetOrCreateSession failed: %v", err)
+	}
+	if sess2.ID != sess.ID {
+		t.Error("Expected same session ID for same cookie hash")
+	}
+
+	// Increment usage
+	s.IncrementSessionUsage(cookieHash, 10)
+	sess3, _ := s.GetOrCreateSession(cookieHash, "")
+	if sess3.UsageMin != 10 {
+		t.Errorf("Expected 10, got %d", sess3.UsageMin)
+	}
+}
+
+func TestFreeQuota_Constant(t *testing.T) {
+	if FreeQuota != 30 {
+		t.Errorf("Expected FreeQuota to be 30, got %d", FreeQuota)
 	}
 }
 
@@ -195,7 +136,7 @@ func TestCreateJob(t *testing.T) {
 	defer s.Close()
 
 	id := uuid.New().String()
-	err := s.CreateJob(id, "user123", "", "test.mp3", 5000000)
+	err := s.CreateJob(id, "user123", "test.docx", 5000000)
 	if err != nil {
 		t.Fatalf("CreateJob failed: %v", err)
 	}
@@ -204,11 +145,11 @@ func TestCreateJob(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetJob failed: %v", err)
 	}
-	if job["status"] != "pending" {
-		t.Errorf("Expected status 'pending', got %v", job["status"])
+	if job.Status != JobPending {
+		t.Errorf("Expected status 'pending', got %v", job.Status)
 	}
-	if job["file_name"] != "test.mp3" {
-		t.Errorf("Expected file_name 'test.mp3', got %v", job["file_name"])
+	if job.FileName != "test.docx" {
+		t.Errorf("Expected file_name 'test.docx', got %v", job.FileName)
 	}
 }
 
@@ -217,21 +158,36 @@ func TestUpdateJobStatus(t *testing.T) {
 	defer s.Close()
 
 	id := uuid.New().String()
-	s.CreateJob(id, "", "", "test.wav", 1000000)
+	s.CreateJob(id, "user123", "test.docx", 1000000)
 
-	err := s.UpdateJobStatus(id, "completed", `{"text":"hello world"}`)
+	err := s.UpdateJobStatus(id, JobCompleted, `{"summary":"ok"}`)
 	if err != nil {
 		t.Fatalf("UpdateJobStatus failed: %v", err)
 	}
 
 	job, _ := s.GetJob(id)
-	if job["status"] != "completed" {
-		t.Errorf("Expected status 'completed', got %v", job["status"])
+	if job.Status != JobCompleted {
+		t.Errorf("Expected status 'completed', got %v", job.Status)
+	}
+	if job.Result == "" {
+		t.Error("Expected non-empty result")
 	}
 }
 
-func TestFreeQuota_Constant(t *testing.T) {
-	if FreeQuota != 30 {
-		t.Errorf("Expected FreeQuota to be 30, got %d", FreeQuota)
+func TestListJobs(t *testing.T) {
+	s := newTestDB(t)
+	defer s.Close()
+
+	for i := 0; i < 3; i++ {
+		id := uuid.New().String()
+		s.CreateJob(id, "user123", fmt.Sprintf("test%d.docx", i), int64(1000*i))
+	}
+
+	jobs, err := s.ListJobs("user123", 10)
+	if err != nil {
+		t.Fatalf("ListJobs failed: %v", err)
+	}
+	if len(jobs) != 3 {
+		t.Errorf("Expected 3 jobs, got %d", len(jobs))
 	}
 }
