@@ -387,23 +387,28 @@ type ExportOptions struct {
 }
 
 // GenerateExport creates report in requested format
-func GenerateExport(data *ReportData, opts ExportOptions) (string, string) {
+func GenerateExport(data *ReportData, opts ExportOptions) (string, []byte) {
 	ext := ".txt"
-	content := ""
+	content := []byte{}
 
 	switch opts.Format {
 	case "html":
 		ext = ".html"
-		content = GenerateHTMLReport(data)
+		content = []byte(GenerateHTMLReport(data))
 	case "json":
 		ext = ".json"
-		content, _ = GenerateJSONReport(data)
+		jsonStr, _ := GenerateJSONReport(data)
+		content = []byte(jsonStr)
 	case "csv":
 		ext = ".csv"
-		content = GenerateCSVReport(data)
+		content = []byte(GenerateCSVReport(data))
+	case "docx":
+		ext = ".docx"
+		_, docxBytes := GenerateDOCXReport(data)
+		content = docxBytes
 	default:
 		ext = ".txt"
-		content = GenerateTextReport(data)
+		content = []byte(GenerateTextReport(data))
 	}
 
 	filename := fmt.Sprintf("contract-analysis-%s%s", time.Now().Format("20060102-150405"), ext)

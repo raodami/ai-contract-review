@@ -432,14 +432,18 @@ func SetupRoutes(r *gin.Engine, s *store.Store) {
 			filename, content := export.GenerateExport(reportData, opts)
 
 			c.Header("Content-Disposition", fmt.Sprintf("attachment; filename=%s", filename))
-			if format == "html" {
-				c.Data(http.StatusOK, "text/html; charset=utf-8", []byte(content))
-			} else if format == "json" {
-				c.Data(http.StatusOK, "application/json; charset=utf-8", []byte(content))
-			} else if format == "csv" {
-				c.Data(http.StatusOK, "text/csv; charset=utf-8", []byte(content))
-			} else {
-				c.Data(http.StatusOK, "text/plain; charset=utf-8", []byte(content))
+
+			switch format {
+			case "html":
+				c.Data(http.StatusOK, "text/html; charset=utf-8", content)
+			case "json":
+				c.Data(http.StatusOK, "application/json; charset=utf-8", content)
+			case "csv":
+				c.Data(http.StatusOK, "text/csv; charset=utf-8", content)
+			case "docx":
+				c.Data(http.StatusOK, "application/vnd.openxmlformats-officedocument.wordprocessingml.document", content)
+			default:
+				c.Data(http.StatusOK, "text/plain; charset=utf-8", content)
 			}
 		})
 

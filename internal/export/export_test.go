@@ -1,6 +1,7 @@
 package export
 
 import (
+	"strings"
 	"testing"
 )
 
@@ -21,13 +22,13 @@ func TestGenerateTextReport(t *testing.T) {
 	if len(report) == 0 {
 		t.Error("Expected non-empty report")
 	}
-	if !contains(report, "AI CONTRACT REVIEW") {
+	if !strings.Contains(report, "AI CONTRACT REVIEW") {
 		t.Error("Report missing header")
 	}
-	if !contains(report, "test_contract.docx") {
+	if !strings.Contains(report, "test_contract.docx") {
 		t.Error("Report missing filename")
 	}
-	if !contains(report, "65/100") {
+	if !strings.Contains(report, "65/100") {
 		t.Error("Report missing score")
 	}
 }
@@ -40,13 +41,13 @@ func TestGenerateHTMLReport(t *testing.T) {
 	}
 
 	html := GenerateHTMLReport(data)
-	if !contains(html, "<!DOCTYPE html>") {
+	if !strings.Contains(html, "<!DOCTYPE html>") {
 		t.Error("Missing HTML doctype")
 	}
-	if !contains(html, "AI Contract Review Report") {
+	if !strings.Contains(html, "AI Contract Review Report") {
 		t.Error("Missing title")
 	}
-	if !contains(html, "90") {
+	if !strings.Contains(html, "90") {
 		t.Error("Missing score")
 	}
 }
@@ -61,10 +62,10 @@ func TestGenerateJSONReport(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
-	if !contains(jsonStr, "test.txt") {
+	if !strings.Contains(jsonStr, "test.txt") {
 		t.Error("Missing filename in JSON")
 	}
-	if !contains(jsonStr, `"score"`) {
+	if !strings.Contains(jsonStr, `"score"`) {
 		t.Error("Missing score in JSON")
 	}
 }
@@ -80,10 +81,10 @@ func TestGenerateCSVReport(t *testing.T) {
 	}
 
 	csv := GenerateCSVReport(data)
-	if !contains(csv, "TYPE") {
+	if !strings.Contains(csv, "TYPE") {
 		t.Error("Missing CSV header TYPE")
 	}
-	if !contains(csv, "Clause A") {
+	if !strings.Contains(csv, "Clause A") {
 		t.Error("Missing risk data")
 	}
 }
@@ -96,14 +97,20 @@ func TestGenerateExport(t *testing.T) {
 	if filename == "" {
 		t.Error("Empty filename")
 	}
-	if !contains(content, "AI CONTRACT REVIEW") {
+	if !strings.Contains(string(content), "AI CONTRACT REVIEW") {
 		t.Error("Missing report content")
 	}
 
 	// Test HTML export
 	_, htmlContent := GenerateExport(data, ExportOptions{Format: "html"})
-	if !contains(htmlContent, "<!DOCTYPE html>") {
-		t.Error("Missing HTML doctype", htmlContent[:200])
+	if !strings.Contains(string(htmlContent), "<!DOCTYPE html>") {
+		t.Error("Missing HTML doctype")
+	}
+
+	// Test DOCX export
+	_, docxContent := GenerateExport(data, ExportOptions{Format: "docx"})
+	if len(docxContent) == 0 {
+		t.Error("Empty DOCX content")
 	}
 }
 
@@ -123,9 +130,6 @@ func TestNewReportData(t *testing.T) {
 	if data.Score != 72 {
 		t.Errorf("Expected score 72, got %d", data.Score)
 	}
-	if data.Score != 72 {
-		t.Error("Score mismatch")
-	}
 	if len(data.Risks) != 1 {
 		t.Errorf("Expected 1 risk, got %d", len(data.Risks))
 	}
@@ -135,17 +139,4 @@ func TestNewReportData(t *testing.T) {
 	if data.Scenario == nil {
 		t.Error("Expected scenario")
 	}
-}
-
-func contains(s, substr string) bool {
-	return len(s) > 0 && len(substr) > 0 && (len(s) >= len(substr)) && (s == substr || len(s) > 0 && containsHelper(s, substr))
-}
-
-func containsHelper(s, substr string) bool {
-	for i := 0; i <= len(s)-len(substr); i++ {
-		if s[i:i+len(substr)] == substr {
-			return true
-		}
-	}
-	return false
 }
