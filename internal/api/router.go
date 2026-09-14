@@ -242,6 +242,12 @@ func SetupRoutes(r *gin.Engine, s *store.Store) {
 
 			text, err := parser.ParseDOCX(data)
 			if err != nil {
+				// Try PDF parsing as fallback
+				if parser.IsPDF(data) {
+					text, err = parser.ParsePDF(data)
+				}
+			}
+			if err != nil {
 				s.UpdateJobStatus(jobID, store.JobFailed, fmt.Sprintf("parse error: %v", err))
 				c.JSON(http.StatusBadRequest, gin.H{"error": "Failed to parse file: " + err.Error(), "job_id": jobID})
 				return
